@@ -1,77 +1,67 @@
-import csv,sys,math,os,urllib.request
+import csv,sys,math,urllib.request
 from collections import defaultdict
-DATE=['date','data','datum','дата']
-CAT=['category','cat','тип','категория']
-AMT=['amount','sum','total','сумма']
-DESC=['description','desc','описание']
-def _c(h,a):return next((x for x in h if x.strip().lower() in a),None)
+D=['date','дата'];C=['category','cat','категория'];A=['amount','sum','сумма'];X=['description','desc','описание']
+_g=lambda h,a:next((c for c in h if c.strip().lower() in a),None)
 
 def main():
  if len(sys.argv)<2:print('Usage: python audit.py FILE');sys.exit(1)
- src=sys.argv[1];rows=load(get_file(src));rpt=build_report(src,rows);print(rpt)
- p=os.path.join(os.path.dirname(os.path.abspath(__file__)),'report.txt')
- open(p,'w',encoding='utf-8').write(rpt);print('Saved:'+p)
+ src=sys.argv[1];f=src
+ if src.startswith('http'):urllib.request.urlretrieve(src,'_t.csv');f='_t.csv'
+ rows=load(f);rpt=build_report(src,rows);print(rpt)
+ open('report.txt','w',encoding='utf-8').write(rpt);print('Saved: report.txt')
 
-def total_sum(rows):return round(sum(r['amt']for r in rows),2)
+def total_sum(R):return round(sum(r['a']for r in R),2)
 
-def by_category(rows):
+def by_cat(R):
  t=defaultdict(float)
- for r in rows:t[r['cat']]+=r['amt']
+ for r in R:t[r['c']]+=r['a']
  return sorted(t.items(),key=lambda x:-x[1])
 
-def top5(rows):return sorted(rows,key=lambda r:-r['amt'])[:5]
+def top5(R):return sorted(R,key=lambda r:-r['a'])[:5]
 
-def find_duplicates(rows):
+def find_dups(R):
  s=defaultdict(list)
- for r in rows:s[(r['date'],r['desc'],r['amt'])].append(r)
+ for r in R:s[(r['d'],r['x'],r['a'])].append(r)
  return{k:v for k,v in s.items()if len(v)>1}
 
-def find_anomalies(rows):
+def find_anom(R):
  b=defaultdict(list)
- for r in rows:b[r['cat']].append(r)
+ for r in R:b[r['c']].append(r)
  res=[]
  for it in b.values():
-  a=[r['amt']for r in it]
+  a=[r['a']for r in it]
   if len(a)<2:continue
   m=sum(a)/len(a);s=math.sqrt(sum((x-m)**2 for x in a)/len(a))
-  if s:res+=[(r,m+3*s)for r in it if r['amt']>m+3*s]
- return sorted(res,key=lambda x:-x[0]['amt'])
+  if s:res+=[(r,m+3*s)for r in it if r['a']>m+3*s]
+ return sorted(res,key=lambda x:-x[0]['a'])
 
-def find_negatives(rows):return[r for r in rows if r['amt']<0]
+def find_neg(R):return[r for r in R if r['a']<0]
 
-def summarize(rows,d,an,ng):
- t=total_sum(rows);top=by_category(rows)[0]if rows else('?',0)
- pct=round(top[1]/t*100,1)if t else 0
- s=[f'Total expenses: {t}',f'Largest category: {top[0]} ({pct}% of total)']
- s.append(f'ALERT: {len(d)} duplicate group(s) - verify before paying'if d else'No duplicates found')
- s.append(f'ALERT: {len(an)} anomaly(s) above 3-sigma threshold'if an else'No anomalies detected')
- s.append(f'NOTE: {len(ng)} negative amount(s) - possible refunds/errors'if ng else'No negative amounts')
+def summarize(R,dup,an,ng):
+ t=total_sum(R);top=by_cat(R)[0]if R else('?',0)
+ s=[f'Total expenses: {t}',f'Top category: {top[0]} ({round(top[1]/t*100,1)if t else 0}%)']
+ s+=[f'ALERT: {len(dup)} duplicate group(s) - check before paying'if dup else'No duplicates found']
+ s+=[f'ALERT: {len(an)} anomaly(s) above 3-sigma threshold'if an else'No anomalies detected']
+ s+=[f'NOTE: {len(ng)} negative amount(s) - possible refunds/errors'if ng else'No negative amounts']
  return s
 
-def build_report(src,rows):
- d=find_duplicates(rows);an=find_anomalies(rows);ng=find_negatives(rows)
- L=['EXPENSE AUDIT REPORT','File:'+src,'Rows:'+str(len(rows)),
-    '','=== SUMMARY ===']+summarize(rows,d,an,ng)
- L+=['','1. TOTAL: '+str(total_sum(rows)),
-     '','2. BY CATEGORY:']+[f'  {c}: {round(s,2)}'for c,s in by_category(rows)]
- L+=['','3. TOP 5:']+[f"  {r['date']} {r['cat']} {r['desc']} {r['amt']}"for r in top5(rows)]
- L+=['','4. DUPLICATES:']+([f'  {len(g)}x {dt}|{de}|{a}'for(dt,de,a),g in d.items()]or['  none'])
- L+=['','5. ANOMALIES:']+([f"  {r['date']} {r['cat']} {round(r['amt'],2)} lim={round(l,2)}"for r,l in an]or['  none'])
- L+=['','6. NEGATIVES:']+([f"  {r['date']} {r['cat']} {r['amt']}"for r in ng]or['  none'])
+def build_report(src,R):
+ dup=find_dups(R);an=find_anom(R);ng=find_neg(R)
+ L=['AUDIT REPORT','File:'+src,'Rows:'+str(len(R)),'','=== SUMMARY ===']+summarize(R,dup,an,ng)
+ L+=['','TOTAL: '+str(total_sum(R)),'','BY CATEGORY:']+[f' {c}: {round(s,2)}'for c,s in by_cat(R)]
+ L+=['','TOP 5:']+[f" {r['d']} {r['c']} {r['x']} {r['a']}"for r in top5(R)]
+ L+=['','DUPLICATES:']+([f' {len(v)}x {dt}|{dx}|{a}'for(dt,dx,a),v in dup.items()]or[' none'])
+ L+=['','ANOMALIES:']+([f" {r['d']} {r['c']} {round(r['a'],2)} lim={round(l,2)}"for r,l in an]or[' none'])
+ L+=['','NEGATIVES:']+([f" {r['d']} {r['c']} {r['a']}"for r in ng]or[' none'])
  return'\n'.join(L)
-
-def get_file(s):
- if s.startswith('http'):urllib.request.urlretrieve(s,'_tmp.csv');return'_tmp.csv'
- return s
 
 def load(path):
  with open(path,newline='',encoding='utf-8-sig')as f:
-  r=csv.DictReader(f);h=r.fieldnames;d,c,a,x=_c(h,DATE),_c(h,CAT),_c(h,AMT),_c(h,DESC)
-  if not(d and c and a):sys.exit('missing cols')
+  r=csv.DictReader(f);h=r.fieldnames;dc,cc,ac,xc=_g(h,D),_g(h,C),_g(h,A),_g(h,X)
+  if not(dc and cc and ac):sys.exit('missing cols')
   rows=[]
   for row in r:
-   try:rows.append({'date':row[d].strip(),'cat':row[c].strip(),
-    'desc':(row[x]if x else'').strip(),'amt':float(row[a].replace(',','.').replace(' ',''))})
+   try:rows.append({'d':row[dc].strip(),'c':row[cc].strip(),'x':(row[xc]if xc else'').strip(),'a':float(row[ac].replace(',','.').replace(' ',''))})
    except:pass
  return rows
 
