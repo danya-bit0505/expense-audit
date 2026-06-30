@@ -11,11 +11,27 @@ AMT_COLS  = ['amount', 'sum', 'total', 'price', 'сумма', 'итого']
 DESC_COLS = ['description', 'desc', 'name', 'описание', 'название']
 
 
-def detect_col(headers, aliases):
-    for h in headers:
-        if h.strip().lower() in aliases:
-            return h
-    return None
+def main():
+    if len(sys.argv) < 2:
+        print('Usage: python audit.py FILE_OR_URL')
+        sys.exit(1)
+
+    src = sys.argv[1]
+    rows = load(get_file(src))
+    report = build_report(src, rows)
+    print(report)
+
+    out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'report.txt')
+    with open(out_path, 'w', encoding='utf-8') as f:
+        f.write(report)
+    print('Saved: ' + out_path)
+
+
+def get_file(src):
+    if src.startswith('http'):
+        urllib.request.urlretrieve(src, '_tmp.csv')
+        return '_tmp.csv'
+    return src
 
 
 def load(path):
@@ -44,11 +60,11 @@ def load(path):
     return rows
 
 
-def get_file(src):
-    if src.startswith('http'):
-        urllib.request.urlretrieve(src, '_tmp.csv')
-        return '_tmp.csv'
-    return src
+def detect_col(headers, aliases):
+    for h in headers:
+        if h.strip().lower() in aliases:
+            return h
+    return None
 
 
 def total_sum(rows):
@@ -127,7 +143,8 @@ def build_report(src, rows):
     if anomalies:
         for r, limit in anomalies:
             lines.append(
-                f"  {r['date']}  {r['cat']}  amt={round(r['amt'], 2)}  limit={round(limit, 2)}"
+                f"  {r['date']}  {r['cat']}"
+                f"  amt={round(r['amt'], 2)}  limit={round(limit, 2)}"
             )
     else:
         lines.append('  none')
@@ -142,22 +159,6 @@ def build_report(src, rows):
 
     lines.append('=' * 60)
     return '\n'.join(lines)
-
-
-def main():
-    if len(sys.argv) < 2:
-        print('Usage: python audit.py FILE_OR_URL')
-        sys.exit(1)
-
-    src = sys.argv[1]
-    rows = load(get_file(src))
-    report = build_report(src, rows)
-    print(report)
-
-    out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'report.txt')
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(report)
-    print('Saved: ' + out_path)
 
 
 if __name__ == '__main__':
