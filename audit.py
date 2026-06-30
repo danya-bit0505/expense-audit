@@ -1,238 +1,180 @@
 import csv
 import sys
 import math
-import urllib.request
 import os
+import urllib.request
 from collections import defaultdict
 
-DATE_ALIASES = ['date', 'data', 'data', 'datum']
-CATEGORY_ALIASES = ['category', 'cat', 'type', 'kind']
-AMOUNT_ALIASES = ['amount', 'sum', 'total', 'price', 'cost', 'value']
-DESCRIPTION_ALIASES = ['description', 'desc', 'name', 'title', 'note']
-
-RU_DATE_ALIASES = ['data', 'date']
-RU_CATEGORY_ALIASES = ['kategoriya', 'tip', 'vid']
-RU_AMOUNT_ALIASES = ['summa', 'itogo', 'tsena']
-RU_DESCRIPTION_ALIASES = ['opisanie', 'naimenovanie', 'nazvanie']
-
-ALL_DATE = ['date', 'data', 'datum', 'дата']
-ALL_CATEGORY = ['category', 'cat', 'type', 'kind', 'категория', 'тип', 'вид']
-ALL_AMOUNT = ['amount', 'sum', 'total', 'price', 'cost', 'value', 'сумма', 'итого', 'цена']
-ALL_DESC = ['description', 'desc', 'name', 'title', 'note', 'описание', 'наименование', 'название']
+DATE_COLS = ["date", "data", "datum", "day"]
+CAT_COLS = ["category", "cat", "type", "kind"]
+AMT_COLS = ["amount", "sum", "total", "price", "cost"]
+DESC_COLS = ["description", "desc", "name", "title", "note"]
 
 
-def detect_column(headers, aliases):
+def detect(headers, aliases):
     for h in headers:
         if h.strip().lower() in aliases:
             return h
     return None
 
 
-def load_data(path):
-    with open(path, newline='', encoding='utf-8-sig') as f:
-        reader = csv.DictReader(f)
-        headers = reader.fieldnames
-
-        date_col = detect_column(headers, ALL_DATE)
-        cat_col = detect_column(headers, ALL_CATEGORY)
-        amt_col = detect_column(headers, ALL_AMOUNT)
-        desc_col = detect_column(headers, ALL_DESC)
-
-        missing = []
-        if date_col is None:
-            missing.append('date/data')
-        if cat_col is None:
-            missing.append('category/kategoriya')
-        if amt_col is None:
-            missing.append('amount/summa')
-
+def load(path):
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        r = csv.DictReader(f)
+        h = r.fieldnames
+        dc = detect(h, DATE_COLS)
+        cc = detect(h, CAT_COLS)
+        ac = detect(h, AMT_COLS)
+        xc = detect(h, DESC_COLS)
+        missing = [n for n, c in [("date", dc), ("category", cc), ("amount", ac)] if c is None]
         if missing:
-            print("Error: could not detect columns: " + ', '.join(missing))
-            print("Available columns: " + ', '.join(headers))
+            print("Cannot detect columns: " + ", ".join(missing))
+            print("Available: " + ", ".join(h))
             sys.exit(1)
-
         rows = []
-        for row in reader:
+        for row in r:
             try:
-                raw = row[amt_col].replace(',', '.').replace(' ', '')
-                amount = float(raw)
+                amt = float(row[ac].replace(",", ".").replace(" ", ""))
             except (ValueError, KeyError):
                 continue
             rows.append({
-                'date': row.get(date_col, '').strip(),
-                'category': row.get(cat_col, '').strip(),
-                'description': row.get(desc_col, '').strip() if desc_col else '',
-                'amount': amount,
+                "date": row.get(dc, "").strip(),
+                "cat": row.get(cc, "").strip(),
+                "desc": row.get(xc, "").strip() if xc else "",
+                "amt": amt,
             })
     return rows
 
 
-def fetch_file(source):
-    if source.startswith('http://') or source.startswith('https://'):
-        local_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '_downloaded.csv')
-        print("Downloading: " + source)
-        urllib.request.urlretrieve(source, local_path)
-        return local_path
-    return source
+def get_file(src):
+    if src.startswith("http://") or src.startswith("https://"):
+        dest = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_tmp.csv")
+        print("Downloading " + src)
+        urllib.request.urlretrieve(src, dest)
+        return dest
+    return src
 
 
-def total_sum(rows):
-    return sum(r['amount'] for r in rows)
+def calc_total(rows):
+    return sum(r["amt"] for r in rows)
 
 
-def by_category(rows):
-    totals = defaultdict(float)
+def calc_by_cat(rows):
+    t = defaultdict(float)
     for r in rows:
-        totals[r['category']] += r['amount']
-    return sorted(totals.items(), key=lambda x: x[1], reverse=True)
+        t[r["cat"]] += r["amt"]
+    return sorted(t.items(), key=lambda x: x[1], reverse=True)
 
 
-def top5(rows):
-    return sorted(rows, key=lambda x: x['amount'], reverse=True)[:5]
+def calc_top5(rows):
+    return sorted(rows, key=lambda x: x["amt"], reverse=True)[:5]
 
 
-def duplicates(rows):
+def calc_dupes(rows):
     seen = defaultdict(list)
     for r in rows:
-        key = (r['date'], r['description'], r['amount'])
-        seen[key].append(r)
+        seen[(r["date"], r["desc"], r["amt"])].append(r)
     return {k: v for k, v in seen.items() if len(v) > 1}
 
 
-def anomalies(rows):
+def calc_anomalies(rows):
     by_cat = defaultdict(list)
     for r in rows:
-        by_cat[r['category']].append(r)
-
+        by_cat[r["cat"]].append(r)
     result = []
     for cat, items in by_cat.items():
-        amounts = [r['amount'] for r in items]
-        if len(amounts) < 2:
+        amts = [r["amt"] for r in items]
+        if len(amts) < 2:
             continue
-        mean = sum(amounts) / len(amounts)
-        variance = sum((a - mean) ** 2 for a in amounts) / len(amounts)
-        std = math.sqrt(variance)
+        mean = sum(amts) / len(amts)
+        std = math.sqrt(sum((a - mean) ** 2 for a in amts) / len(amts))
         if std == 0:
             continue
-        threshold = mean + 3 * std
+        limit = mean + 3 * std
         for r in items:
-            if r['amount'] > threshold:
-                result.append((r, mean, std, threshold))
-
-    return sorted(result, key=lambda x: x[0]['amount'], reverse=True)
-
-
-def negatives(rows):
-    return [r for r in rows if r['amount'] < 0]
+            if r["amt"] > limit:
+                result.append((r, limit))
+    return sorted(result, key=lambda x: x[0]["amt"], reverse=True)
 
 
-def fmt_row(r):
-    return "  {:<12}  {:<20}  {:<40}  {:>12.2f}".format(
-        r['date'], r['category'], r['description'], r['amount']
-    )
+def calc_negatives(rows):
+    return [r for r in rows if r["amt"] < 0]
 
 
-def build_report(source, rows):
-    SEP = "-" * 80
-    lines = []
+def row_line(r):
+    return "  {:<12} {:<20} {:<35} {:>12.2f}".format(r["date"], r["cat"], r["desc"], r["amt"])
 
-    lines.append("=" * 80)
-    lines.append("EXPENSE AUDIT REPORT")
-    lines.append("=" * 80)
-    lines.append("")
-    lines.append("File: " + source)
-    lines.append("Rows: " + str(len(rows)))
 
-    lines.append("")
-    lines.append(SEP)
-    lines.append("1. TOTAL EXPENSES")
-    lines.append(SEP)
-    lines.append("  {:.2f}".format(total_sum(rows)))
+def make_report(src, rows):
+    out = []
+    out.append("=" * 80)
+    out.append("EXPENSE AUDIT REPORT")
+    out.append("=" * 80)
+    out.append("File: " + src)
+    out.append("Rows: " + str(len(rows)))
 
-    lines.append("")
-    lines.append(SEP)
-    lines.append("2. BY CATEGORY (descending)")
-    lines.append(SEP)
-    for cat, s in by_category(rows):
-        lines.append("  {:<30}  {:>15.2f}".format(cat, s))
+    out.append("")
+    out.append("--- 1. TOTAL ---")
+    out.append("  " + str(calc_total(rows)))
 
-    lines.append("")
-    lines.append(SEP)
-    lines.append("3. TOP 5 LARGEST EXPENSES")
-    lines.append(SEP)
-    lines.append("  {:<12}  {:<20}  {:<40}  {:>12}".format("Date", "Category", "Description", "Amount"))
-    lines.append("  " + "-" * 74)
-    for r in top5(rows):
-        lines.append(fmt_row(r))
+    out.append("")
+    out.append("--- 2. BY CATEGORY ---")
+    for cat, s in calc_by_cat(rows):
+        out.append("  {:<30} {:>15.2f}".format(cat, s))
 
-    lines.append("")
-    lines.append(SEP)
-    lines.append("4. DUPLICATES (same date + description + amount)")
-    lines.append(SEP)
-    dupes = duplicates(rows)
+    out.append("")
+    out.append("--- 3. TOP 5 ---")
+    for r in calc_top5(rows):
+        out.append(row_line(r))
+
+    out.append("")
+    out.append("--- 4. DUPLICATES ---")
+    dupes = calc_dupes(rows)
     if not dupes:
-        lines.append("  No duplicates found.")
+        out.append("  none")
     else:
-        lines.append("  Duplicate groups found: " + str(len(dupes)))
-        for (date, desc, amount), group in dupes.items():
-            lines.append("")
-            lines.append("  [{}x] {}  |  {}  |  {:.2f}".format(len(group), date, desc, amount))
-            for r in group:
-                lines.append("       Category: " + r['category'])
+        for (d, desc, amt), grp in dupes.items():
+            out.append("  [{}x] {} | {} | {:.2f}".format(len(grp), d, desc, amt))
+            for r in grp:
+                out.append("    cat: " + r["cat"])
 
-    lines.append("")
-    lines.append(SEP)
-    lines.append("5. ANOMALIES (amount > mean + 3*sigma per category)")
-    lines.append(SEP)
-    anom = anomalies(rows)
+    out.append("")
+    out.append("--- 5. ANOMALIES (> mean + 3*sigma per category) ---")
+    anom = calc_anomalies(rows)
     if not anom:
-        lines.append("  No anomalies found.")
+        out.append("  none")
     else:
-        lines.append("  Anomalies found: " + str(len(anom)))
-        lines.append("")
-        lines.append("  {:<12}  {:<20}  {:<40}  {:>12}  {:>12}".format(
-            "Date", "Category", "Description", "Amount", "Threshold"
-        ))
-        lines.append("  " + "-" * 100)
-        for r, mean, std, threshold in anom:
-            lines.append("  {:<12}  {:<20}  {:<40}  {:>12.2f}  {:>12.2f}".format(
-                r['date'], r['category'], r['description'], r['amount'], threshold
-            ))
+        for r, limit in anom:
+            out.append("  {:<12} {:<20} {:<30} amt={:.2f} limit={:.2f}".format(
+                r["date"], r["cat"], r["desc"], r["amt"], limit))
 
-    lines.append("")
-    lines.append(SEP)
-    lines.append("6. NEGATIVE AMOUNTS")
-    lines.append(SEP)
-    negs = negatives(rows)
+    out.append("")
+    out.append("--- 6. NEGATIVE AMOUNTS ---")
+    negs = calc_negatives(rows)
     if not negs:
-        lines.append("  No negative amounts found.")
+        out.append("  none")
     else:
-        lines.append("  Found: " + str(len(negs)))
         for r in negs:
-            lines.append(fmt_row(r))
+            out.append(row_line(r))
 
-    lines.append("")
-    lines.append("=" * 80)
-    return "\n".join(lines)
+    out.append("")
+    out.append("=" * 80)
+    return "\n".join(out)
 
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python audit.py <file_path_or_URL>")
+        print("Usage: python audit.py <file_or_url>")
         sys.exit(1)
-
-    source = sys.argv[1]
-    path = fetch_file(source)
-    rows = load_data(path)
-    report = build_report(source, rows)
-
+    src = sys.argv[1]
+    path = get_file(src)
+    rows = load(path)
+    report = make_report(src, rows)
     print(report)
-
-    out_dir = os.path.dirname(os.path.abspath(__file__))
-    out_path = os.path.join(out_dir, "report.txt")
-    with open(out_path, 'w', encoding='utf-8') as f:
+    out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "report.txt")
+    with open(out, "w", encoding="utf-8") as f:
         f.write(report)
-    print("\nReport saved to " + out_path)
+    print("Saved: " + out)
 
 
 if __name__ == "__main__":
