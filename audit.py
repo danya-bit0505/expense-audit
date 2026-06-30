@@ -5,10 +5,20 @@ import urllib.request
 import os
 from collections import defaultdict
 
-DATE_ALIASES = ['date', 'data', 'дата']
-CATEGORY_ALIASES = ['category', 'cat', 'категория', 'тип', 'вид']
-AMOUNT_ALIASES = ['amount', 'sum', 'total', 'price', 'сумма', 'итого', 'цена']
-DESCRIPTION_ALIASES = ['description', 'desc', 'name', 'описание', 'наименование', 'название']
+DATE_ALIASES = ['date', 'data', 'data', 'datum']
+CATEGORY_ALIASES = ['category', 'cat', 'type', 'kind']
+AMOUNT_ALIASES = ['amount', 'sum', 'total', 'price', 'cost', 'value']
+DESCRIPTION_ALIASES = ['description', 'desc', 'name', 'title', 'note']
+
+RU_DATE_ALIASES = ['data', 'date']
+RU_CATEGORY_ALIASES = ['kategoriya', 'tip', 'vid']
+RU_AMOUNT_ALIASES = ['summa', 'itogo', 'tsena']
+RU_DESCRIPTION_ALIASES = ['opisanie', 'naimenovanie', 'nazvanie']
+
+ALL_DATE = ['date', 'data', 'datum', 'дата']
+ALL_CATEGORY = ['category', 'cat', 'type', 'kind', 'категория', 'тип', 'вид']
+ALL_AMOUNT = ['amount', 'sum', 'total', 'price', 'cost', 'value', 'сумма', 'итого', 'цена']
+ALL_DESC = ['description', 'desc', 'name', 'title', 'note', 'описание', 'наименование', 'название']
 
 
 def detect_column(headers, aliases):
@@ -23,21 +33,29 @@ def load_data(path):
         reader = csv.DictReader(f)
         headers = reader.fieldnames
 
-        date_col = detect_column(headers, DATE_ALIASES)
-        cat_col = detect_column(headers, CATEGORY_ALIASES)
-        amt_col = detect_column(headers, AMOUNT_ALIASES)
-        desc_col = detect_column(headers, DESCRIPTION_ALIASES)
+        date_col = detect_column(headers, ALL_DATE)
+        cat_col = detect_column(headers, ALL_CATEGORY)
+        amt_col = detect_column(headers, ALL_AMOUNT)
+        desc_col = detect_column(headers, ALL_DESC)
 
-        missing = [name for name, col in [('дата', date_col), ('категория', cat_col), ('сумма', amt_col)] if col is None]
+        missing = []
+        if date_col is None:
+            missing.append('date/data')
+        if cat_col is None:
+            missing.append('category/kategoriya')
+        if amt_col is None:
+            missing.append('amount/summa')
+
         if missing:
-            print("Ошибка: не удалось определить столбцы: " + ', '.join(missing))
-            print("Доступные столбцы: " + ', '.join(headers))
+            print("Error: could not detect columns: " + ', '.join(missing))
+            print("Available columns: " + ', '.join(headers))
             sys.exit(1)
 
         rows = []
         for row in reader:
             try:
-                amount = float(row[amt_col].replace(',', '.').replace(' ', ''))
+                raw = row[amt_col].replace(',', '.').replace(' ', '')
+                amount = float(raw)
             except (ValueError, KeyError):
                 continue
             rows.append({
@@ -52,7 +70,7 @@ def load_data(path):
 def fetch_file(source):
     if source.startswith('http://') or source.startswith('https://'):
         local_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '_downloaded.csv')
-        print("Скачиваю файл: " + source)
+        print("Downloading: " + source)
         urllib.request.urlretrieve(source, local_path)
         return local_path
     return source
@@ -115,70 +133,65 @@ def fmt_row(r):
 
 
 def build_report(source, rows):
-    sep = "-" * 80
+    SEP = "-" * 80
     lines = []
 
     lines.append("=" * 80)
-    lines.append("OTCHET PO AUDITU RASKHODOV")
+    lines.append("EXPENSE AUDIT REPORT")
     lines.append("=" * 80)
     lines.append("")
-    lines.append("Fayl: " + source)
-    lines.append("Strok dannykh: " + str(len(rows)))
+    lines.append("File: " + source)
+    lines.append("Rows: " + str(len(rows)))
 
-    # 1. Общая сумма
     lines.append("")
-    lines.append(sep)
-    lines.append("1. OBSHCHAYA SUMMA RASKHODOV")
-    lines.append(sep)
-    lines.append("  {:.2f} rub.".format(total_sum(rows)))
+    lines.append(SEP)
+    lines.append("1. TOTAL EXPENSES")
+    lines.append(SEP)
+    lines.append("  {:.2f}".format(total_sum(rows)))
 
-    # 2. По категориям
     lines.append("")
-    lines.append(sep)
-    lines.append("2. SUMMA PO KATEGORIYAM (po ubyvaniyu)")
-    lines.append(sep)
+    lines.append(SEP)
+    lines.append("2. BY CATEGORY (descending)")
+    lines.append(SEP)
     for cat, s in by_category(rows):
-        lines.append("  {:<25}  {:>15.2f} rub.".format(cat, s))
+        lines.append("  {:<30}  {:>15.2f}".format(cat, s))
 
-    # 3. Топ-5
     lines.append("")
-    lines.append(sep)
-    lines.append("3. TOP-5 SAMYKH KRUPNYKH TRAT")
-    lines.append(sep)
-    lines.append("  {:<12}  {:<20}  {:<40}  {:>12}".format("Data", "Kategoriya", "Opisanie", "Summa"))
+    lines.append(SEP)
+    lines.append("3. TOP 5 LARGEST EXPENSES")
+    lines.append(SEP)
+    lines.append("  {:<12}  {:<20}  {:<40}  {:>12}".format("Date", "Category", "Description", "Amount"))
     lines.append("  " + "-" * 74)
     for r in top5(rows):
         lines.append(fmt_row(r))
 
-    # 4. Дубликаты
     lines.append("")
-    lines.append(sep)
-    lines.append("4. DUBLIKATY (odinakovy data + opisanie + summa)")
-    lines.append(sep)
+    lines.append(SEP)
+    lines.append("4. DUPLICATES (same date + description + amount)")
+    lines.append(SEP)
     dupes = duplicates(rows)
     if not dupes:
-        lines.append("  Dublikaty ne naydeny.")
+        lines.append("  No duplicates found.")
     else:
-        lines.append("  Naydeno grupp dublikatov: " + str(len(dupes)))
+        lines.append("  Duplicate groups found: " + str(len(dupes)))
         for (date, desc, amount), group in dupes.items():
             lines.append("")
-            lines.append("  [{}x] {}  |  {}  |  {:.2f} rub.".format(len(group), date, desc, amount))
+            lines.append("  [{}x] {}  |  {}  |  {:.2f}".format(len(group), date, desc, amount))
             for r in group:
-                lines.append("       Kategoriya: " + r['category'])
+                lines.append("       Category: " + r['category'])
 
-    # 5. Аномалии
     lines.append("")
-    lines.append(sep)
-    lines.append("5. ANOMALII (otkloneniye > 3 sigma ot srednego po kategorii)")
-    lines.append(sep)
+    lines.append(SEP)
+    lines.append("5. ANOMALIES (amount > mean + 3*sigma per category)")
+    lines.append(SEP)
     anom = anomalies(rows)
     if not anom:
-        lines.append("  Anomalii ne naydeny.")
+        lines.append("  No anomalies found.")
     else:
-        lines.append("  Naydeno anomaliy: " + str(len(anom)))
+        lines.append("  Anomalies found: " + str(len(anom)))
         lines.append("")
         lines.append("  {:<12}  {:<20}  {:<40}  {:>12}  {:>12}".format(
-            "Data", "Kategoriya", "Opisanie", "Summa", "Porog"
+            "Date", "Category", "Description", "Amount", "Threshold"
         ))
         lines.append("  " + "-" * 100)
         for r, mean, std, threshold in anom:
@@ -186,16 +199,15 @@ def build_report(source, rows):
                 r['date'], r['category'], r['description'], r['amount'], threshold
             ))
 
-    # 6. Отрицательные суммы
     lines.append("")
-    lines.append(sep)
-    lines.append("6. STROKI S OTRITSATELNYMI SUMMAMI")
-    lines.append(sep)
+    lines.append(SEP)
+    lines.append("6. NEGATIVE AMOUNTS")
+    lines.append(SEP)
     negs = negatives(rows)
     if not negs:
-        lines.append("  Otritsatelnykh summ ne naydeno.")
+        lines.append("  No negative amounts found.")
     else:
-        lines.append("  Naydeno: " + str(len(negs)))
+        lines.append("  Found: " + str(len(negs)))
         for r in negs:
             lines.append(fmt_row(r))
 
@@ -206,7 +218,7 @@ def build_report(source, rows):
 
 def main():
     if len(sys.argv) < 2:
-        print("Ispolzovaniye: python audit.py <put_k_faylu_ili_URL>")
+        print("Usage: python audit.py <file_path_or_URL>")
         sys.exit(1)
 
     source = sys.argv[1]
@@ -220,7 +232,7 @@ def main():
     out_path = os.path.join(out_dir, "report.txt")
     with open(out_path, 'w', encoding='utf-8') as f:
         f.write(report)
-    print("\nOtchet sokhranen v " + out_path)
+    print("\nReport saved to " + out_path)
 
 
 if __name__ == "__main__":
