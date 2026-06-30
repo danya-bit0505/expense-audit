@@ -1,165 +1,70 @@
-import csv
-import sys
-import math
-import os
-import urllib.request
+import csv,sys,math,os,urllib.request
 from collections import defaultdict
-
-DATE_COLS = ['date', 'data', 'datum', 'дата']
-CAT_COLS  = ['category', 'cat', 'type', 'категория', 'тип']
-AMT_COLS  = ['amount', 'sum', 'total', 'price', 'сумма', 'итого']
-DESC_COLS = ['description', 'desc', 'name', 'описание', 'название']
-
+DATE=['date','data','datum','дата']
+CAT=['category','cat','тип','категория']
+AMT=['amount','sum','total','сумма']
+DESC=['description','desc','описание']
+def _c(h,a):return next((x for x in h if x.strip().lower() in a),None)
 
 def main():
-    if len(sys.argv) < 2:
-        print('Usage: python audit.py FILE_OR_URL')
-        sys.exit(1)
+ if len(sys.argv)<2:print('Usage: python audit.py FILE');sys.exit(1)
+ src=sys.argv[1];rows=load(get_file(src));rpt=build_report(src,rows);print(rpt)
+ p=os.path.join(os.path.dirname(os.path.abspath(__file__)),'report.txt')
+ open(p,'w',encoding='utf-8').write(rpt);print('Saved:'+p)
 
-    src = sys.argv[1]
-    rows = load(get_file(src))
-    report = build_report(src, rows)
-    print(report)
+def build_report(src,rows):
+ L=['EXPENSE AUDIT REPORT','File:'+src,'Rows:'+str(len(rows)),
+    '','1. TOTAL: '+str(total_sum(rows)),
+    '','2. BY CATEGORY:']+[f'  {c}: {round(s,2)}'for c,s in by_category(rows)]
+ L+=['','3. TOP 5:']+[f"  {r['date']} {r['cat']} {r['desc']} {r['amt']}"for r in top5(rows)]
+ d=find_duplicates(rows)
+ L+=['','4. DUPLICATES:']+([f'  {len(g)}x {dt}|{de}|{a}'for(dt,de,a),g in d.items()]or['  none'])
+ an=find_anomalies(rows)
+ L+=['','5. ANOMALIES:']+([f"  {r['date']} {r['cat']} {round(r['amt'],2)} lim={round(l,2)}"for r,l in an]or['  none'])
+ ng=find_negatives(rows)
+ L+=['','6. NEGATIVES:']+([f"  {r['date']} {r['cat']} {r['amt']}"for r in ng]or['  none'])
+ return'\n'.join(L)
 
-    out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'report.txt')
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(report)
-    print('Saved: ' + out_path)
-
-
-def get_file(src):
-    if src.startswith('http'):
-        urllib.request.urlretrieve(src, '_tmp.csv')
-        return '_tmp.csv'
-    return src
-
+def get_file(s):
+ if s.startswith('http'):urllib.request.urlretrieve(s,'_tmp.csv');return'_tmp.csv'
+ return s
 
 def load(path):
-    with open(path, newline='', encoding='utf-8-sig') as f:
-        reader = csv.DictReader(f)
-        headers = reader.fieldnames
-        dc = detect_col(headers, DATE_COLS)
-        cc = detect_col(headers, CAT_COLS)
-        ac = detect_col(headers, AMT_COLS)
-        xc = detect_col(headers, DESC_COLS)
-        if not (dc and cc and ac):
-            print('Error: required columns not found (date, category, amount)')
-            sys.exit(1)
-        rows = []
-        for row in reader:
-            try:
-                amt = float(row[ac].replace(',', '.').replace(' ', ''))
-                rows.append({
-                    'date': row.get(dc, '').strip(),
-                    'cat':  row.get(cc, '').strip(),
-                    'desc': row.get(xc, '').strip() if xc else '',
-                    'amt':  amt,
-                })
-            except (ValueError, KeyError):
-                pass
-    return rows
+ with open(path,newline='',encoding='utf-8-sig')as f:
+  r=csv.DictReader(f);h=r.fieldnames;d,c,a,x=_c(h,DATE),_c(h,CAT),_c(h,AMT),_c(h,DESC)
+  if not(d and c and a):sys.exit('missing cols')
+  rows=[]
+  for row in r:
+   try:rows.append({'date':row[d].strip(),'cat':row[c].strip(),
+    'desc':(row[x]if x else'').strip(),'amt':float(row[a].replace(',','.').replace(' ',''))})
+   except:pass
+ return rows
 
-
-def detect_col(headers, aliases):
-    for h in headers:
-        if h.strip().lower() in aliases:
-            return h
-    return None
-
-
-def total_sum(rows):
-    return sum(r['amt'] for r in rows)
-
+def total_sum(rows):return round(sum(r['amt']for r in rows),2)
 
 def by_category(rows):
-    totals = defaultdict(float)
-    for r in rows:
-        totals[r['cat']] += r['amt']
-    return sorted(totals.items(), key=lambda x: x[1], reverse=True)
+ t=defaultdict(float)
+ for r in rows:t[r['cat']]+=r['amt']
+ return sorted(t.items(),key=lambda x:-x[1])
 
-
-def top5(rows):
-    return sorted(rows, key=lambda x: x['amt'], reverse=True)[:5]
-
+def top5(rows):return sorted(rows,key=lambda r:-r['amt'])[:5]
 
 def find_duplicates(rows):
-    seen = defaultdict(list)
-    for r in rows:
-        seen[(r['date'], r['desc'], r['amt'])].append(r)
-    return {k: v for k, v in seen.items() if len(v) > 1}
-
+ s=defaultdict(list)
+ for r in rows:s[(r['date'],r['desc'],r['amt'])].append(r)
+ return{k:v for k,v in s.items()if len(v)>1}
 
 def find_anomalies(rows):
-    by_cat = defaultdict(list)
-    for r in rows:
-        by_cat[r['cat']].append(r)
-    result = []
-    for items in by_cat.values():
-        amounts = [r['amt'] for r in items]
-        if len(amounts) < 2:
-            continue
-        mean = sum(amounts) / len(amounts)
-        std = math.sqrt(sum((x - mean) ** 2 for x in amounts) / len(amounts))
-        if std > 0:
-            limit = mean + 3 * std
-            result += [(r, limit) for r in items if r['amt'] > limit]
-    return sorted(result, key=lambda x: x[0]['amt'], reverse=True)
+ b=defaultdict(list)
+ for r in rows:b[r['cat']].append(r)
+ res=[]
+ for it in b.values():
+  a=[r['amt']for r in it]
+  if len(a)<2:continue
+  m=sum(a)/len(a);s=math.sqrt(sum((x-m)**2 for x in a)/len(a))
+  if s:res+=[(r,m+3*s)for r in it if r['amt']>m+3*s]
+ return sorted(res,key=lambda x:-x[0]['amt'])
 
+def find_negatives(rows):return[r for r in rows if r['amt']<0]
 
-def find_negatives(rows):
-    return [r for r in rows if r['amt'] < 0]
-
-
-def build_report(src, rows):
-    lines = [
-        '=' * 60,
-        'EXPENSE AUDIT REPORT',
-        '=' * 60,
-        'File: ' + src,
-        'Rows: ' + str(len(rows)),
-    ]
-
-    lines += ['', '1. TOTAL', '-' * 40]
-    lines.append('  ' + str(round(total_sum(rows), 2)))
-
-    lines += ['', '2. BY CATEGORY', '-' * 40]
-    for cat, s in by_category(rows):
-        lines.append(f'  {cat}: {round(s, 2)}')
-
-    lines += ['', '3. TOP 5', '-' * 40]
-    for r in top5(rows):
-        lines.append(f"  {r['date']}  {r['cat']}  {r['desc']}  {r['amt']}")
-
-    lines += ['', '4. DUPLICATES', '-' * 40]
-    dupes = find_duplicates(rows)
-    if dupes:
-        for (dt, de, a), g in dupes.items():
-            lines.append(f'  {len(g)}x  {dt} | {de} | {a}')
-    else:
-        lines.append('  none')
-
-    lines += ['', '5. ANOMALIES (> 3 std from category mean)', '-' * 40]
-    anomalies = find_anomalies(rows)
-    if anomalies:
-        for r, limit in anomalies:
-            lines.append(
-                f"  {r['date']}  {r['cat']}"
-                f"  amt={round(r['amt'], 2)}  limit={round(limit, 2)}"
-            )
-    else:
-        lines.append('  none')
-
-    lines += ['', '6. NEGATIVES', '-' * 40]
-    negatives = find_negatives(rows)
-    if negatives:
-        for r in negatives:
-            lines.append(f"  {r['date']}  {r['cat']}  {r['amt']}")
-    else:
-        lines.append('  none')
-
-    lines.append('=' * 60)
-    return '\n'.join(lines)
-
-
-if __name__ == '__main__':
-    main()
+if __name__=='__main__':main()
